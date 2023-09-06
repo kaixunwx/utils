@@ -1,0 +1,288 @@
+package com.karathome.framework.utils;
+
+import com.alibaba.excel.EasyExcel;
+import com.alibaba.excel.exception.ExcelCommonException;
+import com.alibaba.excel.read.metadata.ReadWorkbook;
+import com.alibaba.excel.support.ExcelTypeEnum;
+import com.karathome.framework.constant.CommonConstants;
+import com.karathome.framework.exception.MyException;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.web.multipart.MultipartFile;
+
+import javax.servlet.http.HttpServletResponse;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+/**
+ * excel操作类
+ *
+ * @author kaixunwx
+ * @create 2022.3.2 8:47
+ */
+@Slf4j
+public class ExcelUtils {
+
+    /**
+     * 读取excel内容
+     *
+     * @param file
+     * @param clazz
+     * @param <T>
+     * @return
+     */
+    public static <T> List<T> read(MultipartFile file, Class<T> clazz) {
+        // 检测文件类型
+        ReadWorkbook readWorkbook = new ReadWorkbook();
+        try {
+            readWorkbook.setInputStream(file.getInputStream());
+        } catch (IOException e) {
+            log.error("excel文件读取错误,文件名:{},异常信息:{}", file.getName(), e);
+        }
+        try {
+            ExcelTypeEnum excelTypeEnum = ExcelTypeEnum.valueOf(readWorkbook);
+        } catch (ExcelCommonException e) {
+            throw new MyException("只支持xls, xlsx, csv格式文件");
+        }
+
+        // 实例化实现了AnalysisEventListener接口的类
+        EasyExcelListener listener = new EasyExcelListener();
+
+        // 传入参数
+        try {
+            EasyExcel.read(file.getInputStream(), clazz, listener).sheet(0).doRead();
+        } catch (IOException e) {
+            log.error("excel文件读取错误,文件名:{},异常信息:{}", file.getName(), e);
+        }
+
+        // 获取数据
+        return listener.getDatas();
+    }
+
+    /**
+     * 读取excel内容
+     * 指定表头起始行号
+     *
+     * @param file
+     * @param clazz
+     * @param <T>
+     * @return
+     */
+    public static <T> List<T> read(MultipartFile file, Class<T> clazz, Integer headRowNumber) {
+        // 检测文件类型
+        ReadWorkbook readWorkbook = new ReadWorkbook();
+        try {
+            readWorkbook.setInputStream(file.getInputStream());
+        } catch (IOException e) {
+            log.error("excel文件读取错误,文件名:{},异常信息:{}", file.getName(), e);
+        }
+        try {
+            ExcelTypeEnum excelTypeEnum = ExcelTypeEnum.valueOf(readWorkbook);
+        } catch (ExcelCommonException e) {
+            throw new MyException("只支持xls, xlsx, csv格式文件");
+        }
+
+        // 实例化实现了AnalysisEventListener接口的类
+        EasyExcelListener listener = new EasyExcelListener();
+
+        // 传入参数
+        try {
+            EasyExcel.read(file.getInputStream(), clazz, listener).sheet(0).headRowNumber(headRowNumber).doRead();
+        } catch (IOException e) {
+            log.error("excel文件读取错误,文件名:{},异常信息:{}", file.getName(), e);
+        }
+
+        // 获取数据
+        return listener.getDatas();
+    }
+
+    /**
+     * 读取excel内容
+     * 指定表头起始行号
+     *
+     * @param inputStream
+     * @param clazz
+     * @param <T>
+     * @return
+     */
+    public static <T> List<T> read(InputStream inputStream, ExcelTypeEnum excelType, Class<T> clazz) {
+        // 实例化实现了AnalysisEventListener接口的类
+        EasyExcelListener listener = new EasyExcelListener();
+        // 传入参数
+        EasyExcel.read(inputStream, clazz, listener).excelType(excelType).sheet(0).doRead();
+        // 获取数据
+        return listener.getDatas();
+    }
+
+    /**
+     * 导出excel
+     *
+     * @param data
+     * @param fileName
+     * @param clazz
+     * @param <T>
+     * @throws IOException
+     */
+    public static <T> void export(List<T> data, String fileName, Class<T> clazz) throws IOException {
+        // 获取当前请求线程的response
+        HttpServletResponse response = processResponse(fileName);
+        EasyExcel.write(response.getOutputStream(), clazz).sheet("Sheet1").doWrite(data);
+    }
+
+    /**
+     * 导出excel
+     *
+     * @param data
+     * @param fileName
+     * @param clazz
+     * @param <T>
+     * @throws IOException
+     */
+    public static <T> void export(List<T> data, ExcelCellMergeStrategy mergeStrategy, String fileName, Class<T> clazz) throws IOException {
+        // 获取当前请求线程的response
+        HttpServletResponse response = processResponse(fileName);
+        EasyExcel.write(response.getOutputStream(), clazz)
+                .registerWriteHandler(mergeStrategy)
+                .excelType(ExcelTypeEnum.XLSX)
+                .sheet("Sheet1")
+                .doWrite(data);
+    }
+
+    /**
+     * 动态表头导出excel
+     *
+     * @param head
+     * @param data
+     * @param fileName
+     * @throws IOException
+     */
+    public static void exportWithDynamicHead(List<List<String>> head, List<List<Object>> data, String fileName) throws IOException {
+        // 获取当前请求线程的response
+        HttpServletResponse response = processResponse(fileName);
+        EasyExcel.write(response.getOutputStream()).head(head).sheet("Sheet1").doWrite(data);
+    }
+
+    /**
+     * 导出前处理response
+     *
+     * @param fileName
+     * @return
+     * @throws Exception
+     */
+    public static HttpServletResponse processResponse(String fileName) {
+        HttpServletResponse response = ServletContextHolderUtils.getHttpServletResponseAndContentType(CommonConstants.CONTENT_TYPE.EXCEL_TYPE);
+        response.setCharacterEncoding("utf-8");
+        response.setHeader("Content-disposition", "attachment;filename=" + fileName + ".xlsx");
+        return response;
+    }
+
+    /**
+     * 从网络上读取图片字节流
+     *
+     * @param strUrl
+     * @return
+     */
+    public static byte[] getImageFromNetByUrl(String strUrl) {
+        if (!isURL(strUrl)) {
+            return null;
+        }
+        try {
+            URL url = new URL(strUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(2 * 1000);
+            InputStream inStream = conn.getInputStream();// 通过输入流获取图片数据
+            byte[] btImg = readInputStream(inStream);// 得到图片的二进制数据
+            return btImg;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    public static byte[] readInputStream(InputStream inStream) throws Exception {
+        ByteArrayOutputStream outStream = new ByteArrayOutputStream();
+        //创建一个Buffer字符串
+        byte[] buffer = new byte[6024];
+        //每次读取的字符串长度，如果为-1，代表全部读取完毕
+        int len = 0;
+        //使用一个输入流从buffer里把数据读取出来
+        while ((len = inStream.read(buffer)) != -1) {
+            //用输出流往buffer里写入数据，中间参数代表从哪个位置开始读，len代表读取的长度
+            outStream.write(buffer, 0, len);
+        }
+        //关闭输入流
+        inStream.close();
+        //把outStream里的数据写入内存
+        return outStream.toByteArray();
+    }
+
+    public static boolean isURL(String str) {
+        str = str.toLowerCase();
+        String regex = "^((https|http|ftp|rtsp|mms)?://)"
+                + "?(([0-9a-z_!~*'().&=+$%-]+: )?[0-9a-z_!~*'().&=+$%-]+@)?"
+                + "(([0-9]{1,3}\\.){3}[0-9]{1,3}"
+                + "|"
+                + "([0-9a-z_!~*'()-]+\\.)*"
+                + "([0-9a-z][0-9a-z-]{0,61})?[0-9a-z]\\."
+                + "[a-z]{2,6})"
+                + "(:[0-9]{1,5})?"
+                + "((/?)|"
+                + "(/[0-9a-z_!~*'().;?:@&=+$,%#-]+)+/?)$";
+        return str.matches(regex);
+    }
+
+    /**
+     * 读取excel文件并返回json格式的解析结果
+     *
+     * @param file
+     * @return
+     * @throws IOException
+     */
+    public static Map<String, Object> read(MultipartFile file) throws IOException {
+        Workbook workbook = new XSSFWorkbook(file.getInputStream());
+        Sheet sheet = workbook.getSheetAt(0);
+        // 获取第一行num
+        int firstRowNum = sheet.getFirstRowNum();
+        // 获取最后一行num
+        int lastRowNum = sheet.getLastRowNum();
+        // 获取excel第一行(表头)
+        Row firstRow = sheet.getRow(firstRowNum);
+        List<String> headList = new ArrayList<>();
+        // 遍历第一行 解析表头
+        for (int i = 0; i < firstRow.getLastCellNum(); i++) {
+            headList.add(firstRow.getCell(i).toString().trim());
+        }
+        List<List<String>> dataList = new ArrayList<>();
+        // 从excel第二行开始解析数据
+        for (int i = firstRowNum + 1; i <= lastRowNum; i++) {
+            Row row = sheet.getRow(i);
+            if(row == null || row.getLastCellNum() == -1|| row.getCell(0) == null || Objects.equals(row.getCell(0).toString(), "")) { // 跳过空行
+                continue;
+            }
+            List<String> data = new ArrayList<>();
+            for (int j = 0; j < firstRow.getLastCellNum(); j++) {
+                Cell cell = row.getCell(j);
+                String trim = cell == null ? null : cell.toString().trim();
+                data.add(trim);
+            }
+            dataList.add(data);
+        }
+        Map<String, Object> result = new HashMap<>();
+        result.put("head", headList);
+        result.put("data", dataList);
+        return result;
+    }
+}
